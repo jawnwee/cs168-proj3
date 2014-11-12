@@ -39,17 +39,14 @@ class Firewall:
 
         packet_passed = self.evaluate_rules(pkt_dir, pkt)
 
-        src_ip = pkt[12:16]
-        dst_ip = pkt[16:20]
-        ipid, = struct.unpack('!H', pkt[4:6])    # IP identifier (big endian)
         
         if pkt_dir == PKT_DIR_INCOMING:
             dir_str = 'incoming'
         else:
             dir_str = 'outgoing'
 
-        print '%s len=%4dB, IPID=%5d  %15s -> %15s' % (dir_str, len(pkt), ipid,
-                socket.inet_ntoa(src_ip), socket.inet_ntoa(dst_ip))
+       # print '%s len=%4dB, IPID=%5d  %15s -> %15s' % (dir_str, len(pkt), ipid,
+       #         socket.inet_ntoa(src_ip), socket.inet_ntoa(dst_ip))
 
         # ... and simply allow the packet.
         if pkt_dir == PKT_DIR_INCOMING:
@@ -64,6 +61,8 @@ class Firewall:
         if len(pkt) < 8:
             return None
         ip_eval = {}
+        ip_eval['version'] = struct.unpack('!B', pkt[0:1]) & 0b11110000
+        ip_eval['header_len'] = struct.unpack('!B', pkt[0:1]) & 0b00001111
         ip_eval['pass_pkt'] = True
         ip_eval['total_len'] = struct.unpack('!H', pkt[2:4])
         ip_eval['ttl'] = struct.unpack('!B', pkt[8:9])
@@ -82,26 +81,66 @@ class Firewall:
 
         return ip_eval
 
-    # TODO: You can add more methods as you want.
-    def determine_protocol(self, pkt):
+
+    # We check the ip packet and determine the protcol and create packets based off that.
+    # Keep this function clean and simple
+    def determine_protocol(self, ip_eval, pkt):
         protocol = struct.unpack('B!', pkt[9:10])
+
+        #This is where the packet begins; since, for example if header length was 7,
+        #the tcp packet starts at 7*4 bytes. so all the information like
+        #src_port is essentially pkt[28:30]; treat this value as our 0 essentially
+        header_start = ip_eval['header_len'] * 4
         #ICMP
         if protocol == 1:
-            pass
+            self.make_icmp_packet(ip_eval, pkt, header_start)
+            return "icmp"
         #TCP
         elif protocol == 6:
-            pass
-        #DNS
-        elif protocol == 17:
-            pass
-        return 'other'
-        
-    def make_tcp_packet(self):
-        
-        pass
+            self.make_tcp_packet(ip_eval, pkt, header_start)
+            return 'tcp'
 
-    def make_dns_packet(self):
+        #DNS is a UDP packet, but if this isnt a DNS, then we want to just return a UDP packet 
+        elif protocol == 17:
+            ip_eval['src_port'] = struct.unpack('H!', pkt[header_start:header_start + 2])
+            ip_eval['dst_port'] = struct.unpack('H!', pkt[header_start + 2:header_start + 4])
+            if ip_eval['dst_port'] == 53:
+                self.make_dns_packet(ip_eval, pkt, header_start)
+                return 'dns'
+            ip_eval['udp_len'] = struct.unpack('H!', pkt[header_start + 4:header_start + 6])
+            ip_eval['checksum'] = struct.unpack('H!', pkt[header_start + 6:header_start + 8])
+
+            return 'udp'
+        return 'other'
+    
+    def make_icmp_packet(self, ip_eval, pkt, header_start):
+        ip_eval['type'] = struct.unpack('B!', pkt[header_start:header_start+1])
+        ip_eval['code'] = struct.unpack('B!', pkt[header_start+1: header_start + 2])
+        ip_eval['checksum'] = struct.unpack('H!', pkt[header+2:header_start+4])
+
+        # TODO: (not sure if 3B) but theres an 'others' leftover, not sure what this means, will have to
+        # look into it
+        
+    def make_tcp_packet(self, ip_eval, pkt, header_start):
+        # TODO: add the other stuff, but i think for 3a we just care about src_port and dst_port
+        ip_eval['src_port'] = struct.unpack('H!', pkt[header_start:header_start + 2])    
+        ip_eval['dst_port'] = struct.unpack('H!', pkt[header_start + 2: header_start + 4])
+        ip_eval['seq_num'] = struct.unpack('L!', pkt[header_start + 4: header_start + 8])
+        ip_eval['ack_num'] = struct.unpack('L!', pkt[header_start + 8: header_start + 12])
+        
+        offset_reserved = struct.unpack('B!', pkt[header_start + 12: header_start + 13])
+        offset = 0b11110000 & offset_reserved
+        reserved = 0b00001111 & offset_reserved
+
+        flags = struct.unpack('B!', pkt[header_start + 13: header_start + 14])
+        #TODO: (PROJECT 3B) deal with this flag nonsense
+
+
+    def make_dns_packet(self, ip_eval, pkt, header_start):
+        #TODO: make dns packet here
         pass
+        
+        
 
 
     def evaluate_rules(self, pkt_dir, pkt):
@@ -110,6 +149,8 @@ class Firewall:
 
         src_ip = pkt[12:16]
         dst_ip = pkt[16:20]
+
+        ip_eval = self.evaluate_packet(pkt)
 
         for rule in self.rules:
             rule = [r.lower() for r in rule.split()]
