@@ -90,8 +90,10 @@ class Firewall:
             pass
         #TCP
         elif protocol == 6:
+            pass
         #DNS
         elif protocol == 17:
+            pass
         return 'other'
         
     def make_tcp_packet(self):
@@ -139,6 +141,7 @@ class Firewall:
             pkt_ext_ip = pkt[12:16]
 
         if self.evaluate_ip(ext_ip, pkt_ext_ip):
+            pass
             
 
 
