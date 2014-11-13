@@ -25,8 +25,8 @@ class Firewall:
                 self.rules.append(line)
 
 
-        # TODO: Load the GeoIP DB ('geoipdb.txt') as well.
-        # TODO: Also do some initialization if needed.
+    # TODO: Load the GeoIP DB ('geoipdb.txt') as well.
+    # TODO: Also do some initialization if needed.
 
     # @pkt_dir: either PKT_DIR_INCOMING or PKT_DIR_OUTGOING
     # @pkt: the actual data of the IPv4 packet (including IP header)
@@ -37,26 +37,18 @@ class Firewall:
 
         pkt_eval = self.evaluate_packet(pkt)
 
-        packet_passed = self.evaluate_rules(pkt_dir, pkt)
-
-        
-        if pkt_dir == PKT_DIR_INCOMING:
-            dir_str = 'incoming'
-        else:
-            dir_str = 'outgoing'
+        packet_passed = self.evaluate_rules(pkt_dir, pkt_eval)
 
        # print '%s len=%4dB, IPID=%5d  %15s -> %15s' % (dir_str, len(pkt), ipid,
        #         socket.inet_ntoa(src_ip), socket.inet_ntoa(dst_ip))
-
-        # ... and simply allow the packet.
-        if pkt_dir == PKT_DIR_INCOMING:
-            self.iface_int.send_ip_packet(pkt)
-        elif pkt_dir == PKT_DIR_OUTGOING:
-            self.iface_ext.send_ip_packet(pkt)
+        if packet_passed:
+            if pkt_dir == PKT_DIR_INCOMING:
+                self.iface_int.send_ip_packet(pkt)
+            elif pkt_dir == PKT_DIR_OUTGOING:
+                self.iface_ext.send_ip_packet(pkt)
 
     # This evaluation is where we pretty much decipher the IP packet and return this evaluation
     # to the handle_rules part and see whether or not this packet is part of the rules
-    # I think
     def evaluate_packet(self, pkt):
         if len(pkt) < 8:
             return None
@@ -77,8 +69,6 @@ class Firewall:
            ip_eval['src_ip'] = socket.inet_ntoa(pkt[12:16])
            ip_eval['dst_ip'] = socket.inet_ntoa(pkt[16:20])
            ip_eval['protocol'] = self.determine_protocol(ip_eval, pkt)
-
-
         return ip_eval
 
 
@@ -140,18 +130,19 @@ class Firewall:
         #TODO: make dns packet here
         pass
         
-        
 
-
-    def evaluate_rules(self, pkt_dir, pkt):
+    # So evaluate all the rules in the config for each packet. If we find a match,
+    # look at the verdict, use this, otherwise, just pass the packet.
+    # we want to return some sort of indicator to send this packet or not
+ 
+    def evaluate_rules(self, pkt_dir, pkt_eval):
         # TODO: need to handle all rules here and determine for packet PASS/FAIL return type?
         verdict, protocol, ext_ip, ext_port, domain = None, None, None, None, None
 
         src_ip = pkt[12:16]
         dst_ip = pkt[16:20]
 
-        ip_eval = self.evaluate_packet(pkt)
-
+        pass_packet = False
         for rule in self.rules:
             rule = [r.lower() for r in rule.split()]
 
@@ -161,8 +152,12 @@ class Firewall:
                 protocol = rule[1]
                 ext_ip = rule[2]
                 ext_port = rule[3]
-                
-                transport = self.handle_transport(verdict, protocol, ext_ip, ext_port, pkt_dir, pkt)
+
+                ip_check = self.check_external_ip(ext_ip, pkt_dir, pkt)
+                check_protocol = False
+                if pkt_eval['protocol'] == protocol:
+                    check_protocol = True
+                port_check = self.check_external_port(ext_port, pkt_dir, pkt)
 
             elif len(rule) == 3:
                 print 'dns rule'
@@ -170,23 +165,35 @@ class Firewall:
                 protocol = 'dns'
                 domain = rule[2]
 
-        return verdict
    
-    def handle_transport(self, verdict, protocol, ext_ip, ext_port, pkt_dir, pkt):
-
+    # Check to see if the IPs match
+    # if it doesnt, then we missed the match and this packet will be dropped
+    def check_external_ip(self, ext_ip, pkt_dir, pkt):
         pkt_ext_ip = None
         if pkt_dir == PKT_DIR_OUTGOING:
             pkt_ext_ip = pkt[16:20]
-
         else:
             pkt_ext_ip = pkt[12:16]
 
-        if self.evaluate_ip(ext_ip, pkt_ext_ip):
+        if ext_ip == 'any':
+            return True
+        elif len(ext_ip) == 2:
             pass
-            
-
+        elif self.evaluate_ip(ext_ip, pkt_ext_ip):
+            return True 
+        elif '/' in ext_ip:
+            # Check for netmask thing here
+            pass
+        else:
+            return False
+    
+    # Check if the port is valid
+    def check_external_port(self, ext_port, pkt_dir, pkt):
+        pass
 
     def evaluate_ip(self, ext_ip, pkt_ext_ip):
+        if ext_ip == pkt_ext_ip:
+            return True
         pass
     def evaluate_port(self):
         pass
