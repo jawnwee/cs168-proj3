@@ -24,6 +24,13 @@ class Firewall:
             if len(line) > 0 and line[0] != '%':
                 self.rules.append(line)
 
+        self.geoip = []
+        geo_lines = open('geoipdb.txt')
+        for line in geo_lines:
+            line = line.strip()
+            if len(line) > 0 and line[0] != '%':
+                self.geoip.append(line)
+
 
     # TODO: Load the GeoIP DB ('geoipdb.txt') as well.
     # TODO: Also do some initialization if needed.
@@ -149,6 +156,8 @@ class Firewall:
     def evaluate_rules(self, pkt_dir, pkt_eval):
         # TODO: need to handle all rules here and determine for packet PASS/FAIL return type?
         verdict, protocol, ext_ip, ext_port, domain = None, None, None, None, None
+        match_found = False
+        final_verdict = None
 
         src_ip = pkt[12:16]
         dst_ip = pkt[16:20]
@@ -158,56 +167,90 @@ class Firewall:
             rule = [r.lower() for r in rule.split()]
 
             if len(rule) == 4:
-                print 'protocol ip rule'
                 veridct = rule[0]
                 protocol = rule[1]
                 ext_ip = rule[2]
                 ext_port = rule[3]
 
-                ip_check = self.check_external_ip(ext_ip, pkt_dir, pkt)
+                ip_check = self.check_external_ip(ext_ip, pkt_dir, pkt_eval)
                 check_protocol = False
                 if pkt_eval['protocol'] == protocol:
                     check_protocol = True
-                port_check = self.check_external_port(ext_port, pkt_dir, pkt)
+                port_check = self.check_external_port(ext_port, pkt_dir, pkt_eval)
+                    verdict = 'drop'
+
+                if ip_check and check_protocol and port_check:
+                    match_found = True
+                    final_verdict = verdict
 
             elif len(rule) == 3:
-                print 'dns rule'
                 verdict = rule[0]
                 protocol = 'dns'
                 domain = rule[2]
 
+        if not match_found:
+            return True
+        else:
+            if final_verdict == 'pass':
+                return True
+            return False
+
    
     # Check to see if the IPs match
     # if it doesnt, then we missed the match and this packet will be dropped
-    def check_external_ip(self, ext_ip, pkt_dir, pkt):
+    def check_external_ip(self, ext_ip, pkt_dir, pkt_eval):
         pkt_ext_ip = None
         if pkt_dir == PKT_DIR_OUTGOING:
-            pkt_ext_ip = pkt[16:20]
+            pkt_ext_ip = pkt_eval['dst_ip']
         else:
-            pkt_ext_ip = pkt[12:16]
-
+            pkt_ext_ip = pkt_eval['src_ip']
         if ext_ip == 'any':
             return True
         elif len(ext_ip) == 2:
-            pass
-        elif self.evaluate_ip(ext_ip, pkt_ext_ip):
+            # Check for geoip db stuff here
+            pkt_ext_ip = struct.unpack('L!', socket.inet_aton(pkt_ext_ip))
+            self.evaluate_geoip(pkt_ext_ip, geo_ips) 
+             
+        elif ext_ip == str(pkt_ext_ip):
             return True 
         elif '/' in ext_ip:
             # Check for netmask thing here
             pass
         else:
             return False
+
+    # Do a Binary search to find a match; if found, we can can return True for checking the ip
+    def evaluate_geoip(self, ext_ip, geo_ips):
+        if len(geo_ips) == 0:
+            return None
+        ip_ranges = geo_ips.split(' ')
+        elif len(geo_ips) == 1:
+            
+        
+        
     
     # Check if the port is valid
-    def check_external_port(self, ext_port, pkt_dir, pkt):
-        pass
+    def check_external_port(self, ext_port, pkt_dir, pkt_eval):
+        pkt_ext_port = None
 
-    def evaluate_ip(self, ext_ip, pkt_ext_ip):
-        if ext_ip == pkt_ext_ip:
+        if pkt_dir == PKT_DIR_OUTGOING:
+            pkt_ext_port = ['dst_port'] 
+        else:
+            pkt_ext_port = ['src_port']
+
+        if pkt_eval['protocol'] == 'icmp':
+            #TODO: something else specific to icmp
+            pass
+        if ext_port == 'any':
             return True
-        pass
-    def evaluate_port(self):
-        pass
+
+        elif '-' in ext_port:
+            range_ports = ext_port.split('-')
+            if int(range_ports[0]) <= pkt_ext_port and int(range_ports[1]) >= pkt_ext_port:
+                return True
+            return False
+        elif ext_port.isdigit():
+            return str(pkt_ext_port) == ext_port
 
 
 # TODO: You may want to add more classes/functions as well.
