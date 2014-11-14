@@ -127,9 +127,10 @@ class Firewall:
 
 
     def make_dns_packet(self, ip_eval, pkt, header_start):
-        #TODO: make dns packet here
-        pass
-        
+        ip_eval['qdcount'] = struct.unpack('H!', pkt[header_start + 4: header_start + 6])
+        i = 0
+        while struct.unpack('H!', pkt[header_start + 12 + i: header_start + 12 + i + 2]) != 0:
+            i += 2
 
     # So evaluate all the rules in the config for each packet. If we find a match,
     # look at the verdict, use this, otherwise, just pass the packet.
