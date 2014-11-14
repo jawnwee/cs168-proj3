@@ -178,8 +178,10 @@ class Firewall:
                 if pkt_eval['protocol'] == protocol:
                     check_protocol = True
                 port_check = self.check_external_port(ext_port, pkt_dir, pkt_eval)
-                verdict = 'drop'
-
+                print 'Current packet and checks:'
+                print 'verdict:', verdict, ' protocol:', protocol, ' ext_ip:', ext_ip, ' ext_port:', ext_port
+                print 'ip_check: ', ip_check, 'protocol_check:', check_protocol, ' port check:', port_check
+                
                 if ip_check and check_protocol and port_check:
                     match_found = True
                     final_verdict = verdict
@@ -211,7 +213,7 @@ class Firewall:
             # Check for geoip db stuff here
             print pkt_ext_ip
             pkt_ext_ip = struct.unpack('!L', socket.inet_aton(pkt_ext_ip))
-            self.evaluate_geoip(pkt_ext_ip, self.geo_ips)
+            return self.evaluate_geoip(pkt_ext_ip, self.geo_ips) == ext_ip.lower()
              
         elif ext_ip == str(pkt_ext_ip):
             return True 
