@@ -193,6 +193,24 @@ class Firewall:
                 verdict = rule[0]
                 protocol = 'dns'
                 domain = rule[2]
+                if pkt_eval['protocol'] == protocol:
+                    dns_ok = self.check_dns(pkt_dir, pkt_eval)
+                    if dns_ok:
+                        if domain[0] == '*':
+                            if len(domain) == 1:
+                                final_verdict = 'pass'
+                                match_found = True
+                            else:
+                                mask_len = len(domain) - 1
+                                qname_len = len(pkt_eval['qname'])
+                                if pkt_eval['qname'][qname_len - mask_len:] == domain[1:]:
+                                    final_verdict = verdict
+                                    match_found = True
+                        else:
+                            if domain == pkt_eval['qname']:
+                                final_verdict = verdict
+                                match_found = True
+
 
         if not match_found:
             return True
@@ -201,6 +219,9 @@ class Firewall:
                 return True
             return False
 
+    # Check to see if DNS preconditions for valid packet are satisfied
+    def check_dns(self, pkt_dir, pkt_eval):
+        return (pkt_eval['qdcount'] == 1) and ((pkt_eval['qtype'] == 1) or (pkt_eval['qtype'] == 28)) and (pkt_eval['qclass'] == 1)
    
     # Check to see if the IPs match
     # if it doesnt, then we missed the match and this packet will be dropped
