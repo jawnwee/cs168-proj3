@@ -133,22 +133,22 @@ class Firewall:
 
 
     def make_dns_packet(self, ip_eval, pkt, header_start):
-        ip_eval['qdcount'] = struct.unpack('!H', pkt[header_start + 4: header_start + 6])[0]
+        ip_eval['qdcount'] = struct.unpack('!H', pkt[header_start + 12: header_start + 14])[0]
         i, j = 0, 0
         qname_list = []
-        while struct.unpack('!B', pkt[header_start + 12 + i: header_start + 13 + i])[0] != 0:
+        while struct.unpack('!B', pkt[header_start + 20 + i: header_start + 21 + i])[0] != 0:
             if j == 0:
-                j = struct.unpack('!B', pkt[header_start + 12 + i: header_start + 13 + i])[0]
-                qname_list += 0x46
+                j = struct.unpack('!B', pkt[header_start + 20 + i: header_start + 21 + i])[0]
+                qname_list.append(0x2e)
             else:
                 j -= 1
-                qname_list += struct.unpack('!B', pkt[header_start + 12 + i: header_start + 13 + i])[0]
+                qname_list.append(struct.unpack('!B', pkt[header_start + 20 + i: header_start + 21 + i])[0])
             i += 1
         if len(qname_list) > 0:
-            qname_list.remove(0x46)
+            qname_list.remove(0x2e)
         ip_eval['qname'] = ''.join(chr(i) for i in qname_list)
-        ip_eval['qtype'] = struct.unpack('!H', pkt[header_start + 13 + i: header_start + 15 + i])[0]
-        ip_eval['qclass'] = struct.unpack('!H', pkt[header_start + 15 + i: header_start + 17 + i])[0]
+        ip_eval['qtype'] = struct.unpack('!H', pkt[header_start + 21 + i: header_start + 23 + i])[0]
+        ip_eval['qclass'] = struct.unpack('!H', pkt[header_start + 23 + i: header_start + 25 + i])[0]
 
     # So evaluate all the rules in the config for each packet. If we find a match,
     # look at the verdict, use this, otherwise, just pass the packet.
@@ -200,11 +200,13 @@ class Firewall:
                     if dns_ok:
                         if domain[0] == '*':
                             if len(domain) == 1:
-                                final_verdict = 'pass'
+                                final_verdict = verdict
                                 match_found = True
                             else:
                                 mask_len = len(domain) - 1
                                 qname_len = len(pkt_eval['qname'])
+                                print pkt_eval['qname']
+                                print "\n\n\n"
                                 if pkt_eval['qname'][qname_len - mask_len:] == domain[1:]:
                                     final_verdict = verdict
                                     match_found = True
