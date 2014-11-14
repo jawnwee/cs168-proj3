@@ -209,8 +209,9 @@ class Firewall:
             return True
         elif len(ext_ip) == 2:
             # Check for geoip db stuff here
+            print pkt_ext_ip
             pkt_ext_ip = struct.unpack('!L', socket.inet_aton(pkt_ext_ip))
-            self.evaluate_geoip(pkt_ext_ip, self.geo_ips) 
+            self.evaluate_geoip(pkt_ext_ip, self.geo_ips)
              
         elif ext_ip == str(pkt_ext_ip):
             return True 
@@ -221,14 +222,28 @@ class Firewall:
             return False
 
     # Do a Binary search to find a match; if found, we can can return True for checking the ip
-    def evaluate_geoip(self, ext_ip, geo_ips):
+    def evaluate_geoip(self, pkt_ext_ip, geo_ips):
         if len(geo_ips) == 0:
             return None
         elif len(geo_ips) == 1:
-            pass
-        # ip_ranges = geo_ips.split(' ')
-            
+            ip_range = geo_ips[0].split()
+            lower = struct.unpack('!L', socket.inet_aton(ip_range[0]))
+            upper = struct.unpack('!L', socket.inet_aton(ip_range[1]))
+            if pkt_ext_ip >= lower and pkt_ext_ip <= upper:
+                return ip_range[2]
         
+        middle = len(geo_ips) / 2
+        ip_range = geo_ips[middle].split()
+
+        lower = struct.unpack('!L', socket.inet_aton(ip_range[0]))
+        upper = struct.unpack('!L', socket.inet_aton(ip_range[1]))
+        if pkt_ext_ip >= lower and pkt_ext_ip <= upper:
+            return ip_range[2]
+
+        if pkt_ext_ip > upper:
+            return self.evaluate_geoip(pkt_ext_ip, geo_ips[middle+1:])
+        else:
+            return self.evaluate_geoip(pkt_ext_ip, geo_ips[0:middle])
         
     
     # Check if the port is valid
