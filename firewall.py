@@ -178,14 +178,16 @@ class Firewall:
                 if pkt_eval['protocol'] == protocol:
                     check_protocol = True
                 port_check = self.check_external_port(ext_port, pkt_dir, pkt_eval)
-                print '\n-------current packet-------'
+                '''print '\n-------current packet-------'
                 print 'protocol:', pkt_eval['protocol']
                 print '\n-------Current rules----'
                 print 'verdict:', verdict, ' protocol:', protocol, ' ext_ip:', ext_ip, ' ext_port:', ext_port
                 print '\n-----Current checks-----'
                 print 'ip_check: ', ip_check, 'protocol_check:', check_protocol, ' port check:', port_check
+                '''
                 
                 if ip_check and check_protocol and port_check:
+                    print 'MATCHED'
                     match_found = True
                     final_verdict = verdict
 
@@ -242,8 +244,17 @@ class Firewall:
         elif ext_ip == str(pkt_ext_ip):
             return True 
         elif '/' in ext_ip:
-            # Check for netmask thing here
-            pass
+            ip_netmask = ext_ip.split('/')
+            pkt_ext_ip = struct.unpack('!L', socket.inet_aton(pkt_ext_ip))
+            ip = struct.unpack('!L', socket.inet_aton(ip_netmask[0]))
+            netmask = struct.unpack('!L', socket.inet_aton(ip_netmask[1]))
+
+            bounds_ip = struct.unpack('!L', socket.inet_aton(ip + (32 - (int(netmask)**2 - 1))))
+            
+            if ip <= pkt_ext_ip and pkt_ext_ip <= bounds_ip:
+                return True
+            return False
+
         else:
             return False
 
@@ -277,13 +288,13 @@ class Firewall:
         pkt_ext_port = None
 
         if pkt_dir == PKT_DIR_OUTGOING:
-            pkt_ext_port = ['dst_port'] 
+            pkt_ext_port = pkt_eval['dst_port'] 
         else:
-            pkt_ext_port = ['src_port']
+            pkt_ext_port = pkt_eval['src_port']
 
         if pkt_eval['protocol'] == 'icmp':
             #TODO: something else specific to icmp
-            pass
+            pkt_ext_port = pkt_eval['type']
         if ext_port == 'any':
             return True
 
