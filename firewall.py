@@ -178,8 +178,11 @@ class Firewall:
                 if pkt_eval['protocol'] == protocol:
                     check_protocol = True
                 port_check = self.check_external_port(ext_port, pkt_dir, pkt_eval)
-                print 'Current packet and checks:'
+                print '\n-------current packet-------'
+                print 'protocol:', pkt_eval['protocol']
+                print '\n-------Current rules----'
                 print 'verdict:', verdict, ' protocol:', protocol, ' ext_ip:', ext_ip, ' ext_port:', ext_port
+                print '\n-----Current checks-----'
                 print 'ip_check: ', ip_check, 'protocol_check:', check_protocol, ' port check:', port_check
                 
                 if ip_check and check_protocol and port_check:
