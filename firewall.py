@@ -94,12 +94,11 @@ class Firewall:
         elif protocol == 17:
             ip_eval['src_port'] = struct.unpack('H!', pkt[header_start:header_start + 2])
             ip_eval['dst_port'] = struct.unpack('H!', pkt[header_start + 2:header_start + 4])
+            ip_eval['udp_len'] = struct.unpack('H!', pkt[header_start + 4:header_start + 6])
+            ip_eval['checksum'] = struct.unpack('H!', pkt[header_start + 6:header_start + 8])
             if ip_eval['dst_port'] == 53:
                 self.make_dns_packet(ip_eval, pkt, header_start)
                 return 'dns'
-            ip_eval['udp_len'] = struct.unpack('H!', pkt[header_start + 4:header_start + 6])
-            ip_eval['checksum'] = struct.unpack('H!', pkt[header_start + 6:header_start + 8])
-
             return 'udp'
         return 'other'
     
@@ -128,9 +127,20 @@ class Firewall:
 
     def make_dns_packet(self, ip_eval, pkt, header_start):
         ip_eval['qdcount'] = struct.unpack('H!', pkt[header_start + 4: header_start + 6])
-        i = 0
-        while struct.unpack('H!', pkt[header_start + 12 + i: header_start + 12 + i + 2]) != 0:
-            i += 2
+        i, j = 0, 0
+        qname_list = []
+        while struct.unpack('B!', pkt[header_start + 12 + i: header_start + 13 + i]) != 0:
+            if j = 0:
+                j = struct.unpack('B!', pkt[header_start + 12 + i: header_start + 13 + i])
+                ip_eval['qname'] += 0x46
+            else:
+                j -= 1
+                ip_eval['qname'] += struct.unpack('B!', pkt[header_start + 12 + i: header_start + 13 + i])
+            i += 1
+        qname_list.remove(0x46)
+        ip_eval['qname'] = ''.join(chr(i) for i in qname_list)
+        ip_eval['qtype'] = struct.unpack('H!', pkt[header_start + 13 + i: header_start + 15 + i + 2])
+        ip_eval['qclass'] = struct.unpack('H!', pkt[header_start + 15 + i: header_start + 17 + i + 2])
 
     # So evaluate all the rules in the config for each packet. If we find a match,
     # look at the verdict, use this, otherwise, just pass the packet.
