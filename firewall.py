@@ -24,12 +24,12 @@ class Firewall:
             if len(line) > 0 and line[0] != '%':
                 self.rules.append(line)
 
-        self.geoip = []
+        self.geo_ips = []
         geo_lines = open('geoipdb.txt')
         for line in geo_lines:
             line = line.strip()
             if len(line) > 0 and line[0] != '%':
-                self.geoip.append(line)
+                self.geo_ips.append(line)
 
 
     # TODO: Load the GeoIP DB ('geoipdb.txt') as well.
@@ -60,12 +60,12 @@ class Firewall:
         if len(pkt) < 8:
             return None
         ip_eval = {}
-        ip_eval['version'] = struct.unpack('!B', pkt[0:1]) & 0b11110000
-        ip_eval['header_len'] = struct.unpack('!B', pkt[0:1]) & 0b00001111
+        ip_eval['version'] = struct.unpack('!B', pkt[0:1])[0] & 0b11110000
+        ip_eval['header_len'] = struct.unpack('!B', pkt[0:1])[0] & 0b00001111
         ip_eval['pass_pkt'] = True
-        ip_eval['total_len'] = struct.unpack('!H', pkt[2:4])
-        ip_eval['ttl'] = struct.unpack('!B', pkt[8:9])
-        ip_eval['checksum'] = struct.unpack('!H', pkt[10:12])
+        ip_eval['total_len'] = struct.unpack('!H', pkt[2:4])[0]
+        ip_eval['ttl'] = struct.unpack('!B', pkt[8:9])[0]
+        ip_eval['checksum'] = struct.unpack('!H', pkt[10:12])[0]
 
         if len(pkt) != ip_eval['total_len']:
            ip_eval['pass_pkt'] = False
@@ -82,7 +82,7 @@ class Firewall:
     # We check the ip packet and determine the protcol and create packets based off that.
     # Keep this function clean and simple
     def determine_protocol(self, ip_eval, pkt):
-        protocol = struct.unpack('B!', pkt[9:10])
+        protocol = struct.unpack('!B', pkt[9:10])[0]
 
         #This is where the packet begins; since, for example if header length was 7,
         #the tcp packet starts at 7*4 bytes. so all the information like
@@ -99,10 +99,10 @@ class Firewall:
 
         #DNS is a UDP packet, but if this isnt a DNS, then we want to just return a UDP packet 
         elif protocol == 17:
-            ip_eval['src_port'] = struct.unpack('H!', pkt[header_start:header_start + 2])
-            ip_eval['dst_port'] = struct.unpack('H!', pkt[header_start + 2:header_start + 4])
-            ip_eval['udp_len'] = struct.unpack('H!', pkt[header_start + 4:header_start + 6])
-            ip_eval['checksum'] = struct.unpack('H!', pkt[header_start + 6:header_start + 8])
+            ip_eval['src_port'] = struct.unpack('!H', pkt[header_start:header_start + 2])[0]
+            ip_eval['dst_port'] = struct.unpack('!H', pkt[header_start + 2:header_start + 4])[0]
+            ip_eval['udp_len'] = struct.unpack('!H', pkt[header_start + 4:header_start + 6])[0]
+            ip_eval['checksum'] = struct.unpack('!H', pkt[header_start + 6:header_start + 8])[0]
             if ip_eval['dst_port'] == 53:
                 self.make_dns_packet(ip_eval, pkt, header_start)
                 return 'dns'
@@ -110,44 +110,45 @@ class Firewall:
         return 'other'
     
     def make_icmp_packet(self, ip_eval, pkt, header_start):
-        ip_eval['type'] = struct.unpack('B!', pkt[header_start:header_start+1])
-        ip_eval['code'] = struct.unpack('B!', pkt[header_start+1: header_start + 2])
-        ip_eval['checksum'] = struct.unpack('H!', pkt[header+2:header_start+4])
+        ip_eval['type'] = struct.unpack('!B', pkt[header_start:header_start+1])[0]
+        ip_eval['code'] = struct.unpack('!B', pkt[header_start+1: header_start + 2])[0]
+        ip_eval['checksum'] = struct.unpack('!H', pkt[header+2:header_start+4])[0]
 
         # TODO: (not sure if 3B) but theres an 'others' leftover, not sure what this means, will have to
         # look into it
         
     def make_tcp_packet(self, ip_eval, pkt, header_start):
         # TODO: add the other stuff, but i think for 3a we just care about src_port and dst_port
-        ip_eval['src_port'] = struct.unpack('H!', pkt[header_start:header_start + 2])    
-        ip_eval['dst_port'] = struct.unpack('H!', pkt[header_start + 2: header_start + 4])
-        ip_eval['seq_num'] = struct.unpack('L!', pkt[header_start + 4: header_start + 8])
-        ip_eval['ack_num'] = struct.unpack('L!', pkt[header_start + 8: header_start + 12])
+        ip_eval['src_port'] = struct.unpack('!H', pkt[header_start:header_start + 2])[0]
+        ip_eval['dst_port'] = struct.unpack('!H', pkt[header_start + 2: header_start + 4])[0]
+        ip_eval['seq_num'] = struct.unpack('!L', pkt[header_start + 4: header_start + 8])[0]
+        ip_eval['ack_num'] = struct.unpack('!L', pkt[header_start + 8: header_start + 12])[0]
         
-        offset_reserved = struct.unpack('B!', pkt[header_start + 12: header_start + 13])
+        offset_reserved = struct.unpack('!B', pkt[header_start + 12: header_start + 13])[0]
         offset = 0b11110000 & offset_reserved
         reserved = 0b00001111 & offset_reserved
 
-        flags = struct.unpack('B!', pkt[header_start + 13: header_start + 14])
+        flags = struct.unpack('!B', pkt[header_start + 13: header_start + 14])[0]
         #TODO: (PROJECT 3B) deal with this flag nonsense
 
 
     def make_dns_packet(self, ip_eval, pkt, header_start):
-        ip_eval['qdcount'] = struct.unpack('H!', pkt[header_start + 4: header_start + 6])
+        ip_eval['qdcount'] = struct.unpack('!H', pkt[header_start + 4: header_start + 6])[0]
         i, j = 0, 0
         qname_list = []
-        while struct.unpack('B!', pkt[header_start + 12 + i: header_start + 13 + i]) != 0:
-            if j = 0:
-                j = struct.unpack('B!', pkt[header_start + 12 + i: header_start + 13 + i])
-                ip_eval['qname'] += 0x46
+        while struct.unpack('!B', pkt[header_start + 12 + i: header_start + 13 + i])[0] != 0:
+            if j == 0:
+                j = struct.unpack('!B', pkt[header_start + 12 + i: header_start + 13 + i])[0]
+                qname_list += 0x46
             else:
                 j -= 1
-                ip_eval['qname'] += struct.unpack('B!', pkt[header_start + 12 + i: header_start + 13 + i])
+                qname_list += struct.unpack('!B', pkt[header_start + 12 + i: header_start + 13 + i])[0]
             i += 1
-        qname_list.remove(0x46)
+        if len(qname_list) > 0:
+            qname_list.remove(0x46)
         ip_eval['qname'] = ''.join(chr(i) for i in qname_list)
-        ip_eval['qtype'] = struct.unpack('H!', pkt[header_start + 13 + i: header_start + 15 + i + 2])
-        ip_eval['qclass'] = struct.unpack('H!', pkt[header_start + 15 + i: header_start + 17 + i + 2])
+        ip_eval['qtype'] = struct.unpack('!H', pkt[header_start + 13 + i: header_start + 15 + i])[0]
+        ip_eval['qclass'] = struct.unpack('!H', pkt[header_start + 15 + i: header_start + 17 + i])[0]
 
     # So evaluate all the rules in the config for each packet. If we find a match,
     # look at the verdict, use this, otherwise, just pass the packet.
@@ -159,15 +160,15 @@ class Firewall:
         match_found = False
         final_verdict = None
 
-        src_ip = pkt[12:16]
-        dst_ip = pkt[16:20]
+        # src_ip = pkt[12:16]
+        # dst_ip = pkt[16:20]
 
         pass_packet = False
         for rule in self.rules:
             rule = [r.lower() for r in rule.split()]
 
             if len(rule) == 4:
-                veridct = rule[0]
+                verdict = rule[0]
                 protocol = rule[1]
                 ext_ip = rule[2]
                 ext_port = rule[3]
@@ -177,7 +178,7 @@ class Firewall:
                 if pkt_eval['protocol'] == protocol:
                     check_protocol = True
                 port_check = self.check_external_port(ext_port, pkt_dir, pkt_eval)
-                    verdict = 'drop'
+                verdict = 'drop'
 
                 if ip_check and check_protocol and port_check:
                     match_found = True
@@ -208,8 +209,8 @@ class Firewall:
             return True
         elif len(ext_ip) == 2:
             # Check for geoip db stuff here
-            pkt_ext_ip = struct.unpack('L!', socket.inet_aton(pkt_ext_ip))
-            self.evaluate_geoip(pkt_ext_ip, geo_ips) 
+            pkt_ext_ip = struct.unpack('!L', socket.inet_aton(pkt_ext_ip))
+            self.evaluate_geoip(pkt_ext_ip, self.geo_ips) 
              
         elif ext_ip == str(pkt_ext_ip):
             return True 
@@ -223,8 +224,9 @@ class Firewall:
     def evaluate_geoip(self, ext_ip, geo_ips):
         if len(geo_ips) == 0:
             return None
-        ip_ranges = geo_ips.split(' ')
         elif len(geo_ips) == 1:
+            pass
+        # ip_ranges = geo_ips.split(' ')
             
         
         
