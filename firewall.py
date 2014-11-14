@@ -112,7 +112,7 @@ class Firewall:
     def make_icmp_packet(self, ip_eval, pkt, header_start):
         ip_eval['type'] = struct.unpack('!B', pkt[header_start:header_start+1])[0]
         ip_eval['code'] = struct.unpack('!B', pkt[header_start+1: header_start + 2])[0]
-        ip_eval['checksum'] = struct.unpack('!H', pkt[header+2:header_start+4])[0]
+        ip_eval['checksum'] = struct.unpack('!H', pkt[header_start+2:header_start+4])[0]
 
         # TODO: (not sure if 3B) but theres an 'others' leftover, not sure what this means, will have to
         # look into it
@@ -187,7 +187,7 @@ class Firewall:
                 '''
                 
                 if ip_check and check_protocol and port_check:
-                    print 'MATCHED'
+                    # print 'MATCHED'
                     match_found = True
                     final_verdict = verdict
 
@@ -198,6 +198,9 @@ class Firewall:
                 if pkt_eval['protocol'] == protocol:
                     dns_ok = self.check_dns(pkt_dir, pkt_eval)
                     if dns_ok:
+                        print domain
+                        print pkt_eval['qname']
+                        print '\n\n'
                         if domain[0] == '*':
                             if len(domain) == 1:
                                 final_verdict = verdict
@@ -205,14 +208,18 @@ class Firewall:
                             else:
                                 mask_len = len(domain) - 1
                                 qname_len = len(pkt_eval['qname'])
-                                print pkt_eval['qname']
-                                print "\n\n\n"
+                                # print pkt_eval['qname'][qname_len - mask_len:]
+                                # print domain[1:]
+                                # print "\n\n\n"
                                 if pkt_eval['qname'][qname_len - mask_len:] == domain[1:]:
                                     final_verdict = verdict
                                     match_found = True
                         else:
                             if domain == pkt_eval['qname']:
+                                print pkt_eval['qname']
+                                print "match!\n\n"
                                 final_verdict = verdict
+                                print final_verdict
                                 match_found = True
 
 
@@ -239,7 +246,7 @@ class Firewall:
             return True
         elif len(ext_ip) == 2:
             # Check for geoip db stuff here
-            print pkt_ext_ip
+            # print pkt_ext_ip
             pkt_ext_ip = struct.unpack('!L', socket.inet_aton(pkt_ext_ip))
             return self.evaluate_geoip(pkt_ext_ip, self.geo_ips) == ext_ip.lower()
              
@@ -289,10 +296,11 @@ class Firewall:
     def check_external_port(self, ext_port, pkt_dir, pkt_eval):
         pkt_ext_port = None
 
-        if pkt_dir == PKT_DIR_OUTGOING:
-            pkt_ext_port = pkt_eval['dst_port'] 
-        else:
-            pkt_ext_port = pkt_eval['src_port']
+        if 'dst_port' in pkt_eval.keys() and 'src_port' in pkt_eval.keys():
+            if pkt_dir == PKT_DIR_OUTGOING:
+                pkt_ext_port = pkt_eval['dst_port'] 
+            else:
+                pkt_ext_port = pkt_eval['src_port']
 
         if pkt_eval['protocol'] == 'icmp':
             #TODO: something else specific to icmp
