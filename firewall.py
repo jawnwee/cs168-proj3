@@ -133,22 +133,25 @@ class Firewall:
 
 
     def make_dns_packet(self, ip_eval, pkt, header_start):
-        ip_eval['qdcount'] = struct.unpack('!H', pkt[header_start + 12: header_start + 14])[0]
-        i, j = 0, 0
-        qname_list = []
-        while struct.unpack('!B', pkt[header_start + 20 + i: header_start + 21 + i])[0] != 0:
-            if j == 0:
-                j = struct.unpack('!B', pkt[header_start + 20 + i: header_start + 21 + i])[0]
-                qname_list.append(0x2e)
-            else:
-                j -= 1
-                qname_list.append(struct.unpack('!B', pkt[header_start + 20 + i: header_start + 21 + i])[0])
-            i += 1
-        if len(qname_list) > 0:
-            qname_list.remove(0x2e)
-        ip_eval['qname'] = ''.join(chr(i) for i in qname_list)
-        ip_eval['qtype'] = struct.unpack('!H', pkt[header_start + 21 + i: header_start + 23 + i])[0]
-        ip_eval['qclass'] = struct.unpack('!H', pkt[header_start + 23 + i: header_start + 25 + i])[0]
+        try:
+            ip_eval['qdcount'] = struct.unpack('!H', pkt[header_start + 12: header_start + 14])[0]
+            i, j = 0, 0
+            qname_list = []
+            while struct.unpack('!B', pkt[header_start + 20 + i: header_start + 21 + i])[0] != 0:
+                if j == 0:
+                    j = struct.unpack('!B', pkt[header_start + 20 + i: header_start + 21 + i])[0]
+                    qname_list.append(0x2e)
+                else:
+                    j -= 1
+                    qname_list.append(struct.unpack('!B', pkt[header_start + 20 + i: header_start + 21 + i])[0])
+                i += 1
+            if len(qname_list) > 0:
+                qname_list.remove(0x2e)
+            ip_eval['qname'] = ''.join(chr(i) for i in qname_list)
+            ip_eval['qtype'] = struct.unpack('!H', pkt[header_start + 21 + i: header_start + 23 + i])[0]
+            ip_eval['qclass'] = struct.unpack('!H', pkt[header_start + 23 + i: header_start + 25 + i])[0]
+        except Exception:
+            ip_eval['pass_pkt'] = False
 
     # So evaluate all the rules in the config for each packet. If we find a match,
     # look at the verdict, use this, otherwise, just pass the packet.
@@ -226,14 +229,17 @@ class Firewall:
         if not match_found:
             return True
         else:
-            if final_verdict == 'pass':
+            if final_verdict == 'pass' and pkt_eval['pass_pkt']:
                 return True
             return False
 
     # Check to see if DNS preconditions for valid packet are satisfied
     def check_dns(self, pkt_dir, pkt_eval):
-        return (pkt_eval['qdcount'] == 1) and ((pkt_eval['qtype'] == 1) or (pkt_eval['qtype'] == 28)) and (pkt_eval['qclass'] == 1)
-   
+        if pkt_eval['pass_pkt']:
+            return (pkt_eval['qdcount'] == 1) and ((pkt_eval['qtype'] == 1) or (pkt_eval['qtype'] == 28)) and (pkt_eval['qclass'] == 1)
+        else:
+            return False
+
     # Check to see if the IPs match
     # if it doesnt, then we missed the match and this packet will be dropped
     def check_external_ip(self, ext_ip, pkt_dir, pkt_eval):
