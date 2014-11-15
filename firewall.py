@@ -248,7 +248,7 @@ class Firewall:
             # Check for geoip db stuff here
             # print pkt_ext_ip
             pkt_ext_ip = struct.unpack('!L', socket.inet_aton(pkt_ext_ip))
-            return self.evaluate_geoip(pkt_ext_ip, self.geo_ips) == ext_ip.lower()
+            return self.evaluate_geoip(pkt_ext_ip, self.geo_ips).lower() == ext_ip.lower()
              
         elif ext_ip == str(pkt_ext_ip):
             return True 
