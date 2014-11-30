@@ -19,7 +19,6 @@ class Firewall:
         self.rules = []
         lines = open(config['rule'], 'r')
         for line in lines:
-            print line
             line = line.strip()
             if len(line) > 0 and line[0] != '%':
                 self.rules.append(line)
@@ -201,9 +200,9 @@ class Firewall:
                 if pkt_eval['protocol'] == protocol:
                     dns_ok = self.check_dns(pkt_dir, pkt_eval)
                     if dns_ok:
-                        print domain
-                        print pkt_eval['qname']
-                        print '\n\n'
+                        # print domain
+                        # print pkt_eval['qname']
+                        # print '\n\n'
                         if domain[0] == '*':
                             if len(domain) == 1:
                                 final_verdict = verdict
@@ -219,10 +218,10 @@ class Firewall:
                                     match_found = True
                         else:
                             if domain == pkt_eval['qname']:
-                                print pkt_eval['qname']
-                                print "match!\n\n"
+                                # print pkt_eval['qname']
+                                # print "match!\n\n"
                                 final_verdict = verdict
-                                print final_verdict
+                                # print final_verdict
                                 match_found = True
 
 
