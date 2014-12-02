@@ -43,7 +43,9 @@ class Firewall:
 
         pkt_eval = self.evaluate_packet(pkt)
 
-        packet_passed = self.evaluate_rules(pkt_dir, pkt_eval)
+        packet_passed = False
+        if pkt_eval['pass_pkt'] == True:
+            packet_passed = self.evaluate_rules(pkt_dir, pkt_eval)
 
        # print '%s len=%4dB, IPID=%5d  %15s -> %15s' % (dir_str, len(pkt), ipid,
        #         socket.inet_ntoa(src_ip), socket.inet_ntoa(dst_ip))
@@ -56,7 +58,7 @@ class Firewall:
     # This evaluation is where we pretty much decipher the IP packet and return this evaluation
     # to the handle_rules part and see whether or not this packet is part of the rules
     def evaluate_packet(self, pkt):
-        if len(pkt) < 8:
+        if len(pkt) < 20:
             return None
         ip_eval = {}
         ip_eval['version'] = struct.unpack('!B', pkt[0:1])[0] & 0b11110000
@@ -75,6 +77,8 @@ class Firewall:
            ip_eval['src_ip'] = socket.inet_ntoa(pkt[12:16])
            ip_eval['dst_ip'] = socket.inet_ntoa(pkt[16:20])
            ip_eval['protocol'] = self.determine_protocol(ip_eval, pkt)
+           if ip_eval['protocol'] == False:
+              ip_eval['pass_pkt'] = False
         return ip_eval
 
 
@@ -89,15 +93,21 @@ class Firewall:
         header_start = ip_eval['header_len'] * 4
         #ICMP
         if protocol == 1:
+            if len(pkt) < header_start + 4:
+                return False
             self.make_icmp_packet(ip_eval, pkt, header_start)
             return "icmp"
         #TCP
         elif protocol == 6:
+            if len(pkt) < header_start + 14:
+                return False
             self.make_tcp_packet(ip_eval, pkt, header_start)
             return 'tcp'
 
         #DNS is a UDP packet, but if this isnt a DNS, then we want to just return a UDP packet 
         elif protocol == 17:
+            if len(pkt) < header_start + 8:
+                return False
             ip_eval['src_port'] = struct.unpack('!H', pkt[header_start:header_start + 2])[0]
             ip_eval['dst_port'] = struct.unpack('!H', pkt[header_start + 2:header_start + 4])[0]
             ip_eval['udp_len'] = struct.unpack('!H', pkt[header_start + 4:header_start + 6])[0]
@@ -253,7 +263,7 @@ class Firewall:
             # Check for geoip db stuff here
             # print pkt_ext_ip
             pkt_ext_ip = struct.unpack('!L', socket.inet_aton(pkt_ext_ip))
-            return self.evaluate_geoip(pkt_ext_ip, self.geo_ips).lower() == ext_ip.lower()
+            return self.evaluate_geoip(pkt_ext_ip, self.geo_ips) == ext_ip.lower()
              
         elif ext_ip == str(pkt_ext_ip):
             return True 
@@ -263,7 +273,7 @@ class Firewall:
             ip = struct.unpack('!L', socket.inet_aton(ip_netmask[0]))
             netmask = struct.unpack('!L', socket.inet_aton(ip_netmask[1]))
 
-            bounds_ip = struct.unpack('!L', socket.inet_aton(ip + (32 - (int(netmask)**2 - 1))))
+            bounds_ip = struct.unpack('!L', socket.inet_aton(ip + (32 - (int(netmask[0])**2 - 1))))
             
             if ip <= pkt_ext_ip and pkt_ext_ip <= bounds_ip:
                 return True
@@ -281,7 +291,7 @@ class Firewall:
             lower = struct.unpack('!L', socket.inet_aton(ip_range[0]))
             upper = struct.unpack('!L', socket.inet_aton(ip_range[1]))
             if pkt_ext_ip >= lower and pkt_ext_ip <= upper:
-                return ip_range[2]
+                return ip_range[2].lower()
         
         middle = len(geo_ips) / 2
         ip_range = geo_ips[middle].split()
