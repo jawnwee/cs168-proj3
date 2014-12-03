@@ -30,6 +30,9 @@ class Firewall:
             if len(line) > 0 and line[0] != '%':
                 self.geo_ips.append(line)
 
+        self.byte_stream = {}
+        self.stream_seq_ack = {}
+
 
     # TODO: Load the GeoIP DB ('geoipdb.txt') as well.
     # TODO: Also do some initialization if needed.
@@ -45,15 +48,189 @@ class Firewall:
 
         packet_passed = False
         if pkt_eval['pass_pkt'] == True:
-            packet_passed = self.evaluate_rules(pkt_dir, pkt_eval)
+            packet_passed = self.evaluate_rules(pkt_dir, pkt_eval, pkt)
 
        # print '%s len=%4dB, IPID=%5d  %15s -> %15s' % (dir_str, len(pkt), ipid,
        #         socket.inet_ntoa(src_ip), socket.inet_ntoa(dst_ip))
-        if packet_passed:
-            if pkt_dir == PKT_DIR_INCOMING:
+        if packet_passed == 'deny':
+            if pkt_eval['protocol'] == 'tcp':
+                '''print 'current'
+                print 'seqno' , pkt_eval['seq_num']
+                print 'ackno', pkt_eval['ack_num']
+                print 'flags', pkt_eval['tcp_flags']'''
+                packet = self.create_rst_packet(pkt_eval, pkt)
+                testing = self.evaluate_packet(packet)
+                '''print 'after'
+                print 'seqno' , testing['seq_num']
+                print 'ackno', testing['ack_num']
+                print 'flags', testing['tcp_flags']'''
+                if pkt_dir == PKT_DIR_OUTGOING:
+                    self.iface_int.send_ip_packet(packet)
+                else:
+                    self.iface_ext.send_ip_packet(packet)
+            if pkt_eval['protocol'] == 'dns':
+                packet = self.dns_response_packet(pkt_eval, pkt)
+                if packet == None:
+                    pass
+                else: 
+                    self.iface_int.send_ip_packet(packet)
+
+        elif packet_passed:
+            if packet_passed == 'drop':
+                if pkt_eval['protocol'] == 'tcp':
+                    pkt = self.create_rst_packet(pkt_eval, pkt)
+                    if pkt_dir == PKT_DIR_OUTGOING:
+                        self.iface_int.send_ip_packet(pkt)
+                    else:
+                        self.iface_ext.send_ip_packet(pkt)
+                elif pkt_eval['protocol'] == 'dns':
+                    pkt = self.dns_response_packet(pkt_eval, pkt)
+                    if pkt == None:
+                        pass
+                    else: 
+                        self.iface_int.send_ip_packet(pkt)
+            elif pkt_dir == PKT_DIR_INCOMING:
                 self.iface_int.send_ip_packet(pkt)
             elif pkt_dir == PKT_DIR_OUTGOING:
                 self.iface_ext.send_ip_packet(pkt)
+
+    def create_rst_packet(self, pkt_eval, pkt):
+        packet = pkt
+        src_ip = socket.inet_aton(pkt_eval['dst_ip'])
+        dst_ip = socket.inet_aton(pkt_eval['src_ip'])
+        packet = packet[0:12] + src_ip + dst_ip + packet[20:]
+
+        header_start = pkt_eval['header_len'] * 4
+        src_port, dst_port= struct.pack('!H', pkt_eval['dst_port']), struct.pack('!H', pkt_eval['src_port'])
+        packet = packet[0:header_start] + src_port + dst_port + packet[header_start + 4:]
+
+        seq_num = pkt_eval['seq_num']
+        adjusted_ack = struct.pack('!L', seq_num + 1)
+        adjusted_seq = struct.pack('!L', 0)
+        packet = packet[0:header_start + 4] + adjusted_seq + adjusted_ack + packet[header_start + 12:]
+
+        flag = 0x14
+        rst_flag = struct.pack('!B', flag)
+        packet = packet[0:header_start + 13] + rst_flag + packet[header_start + 14:]
+        new_length = struct.pack('!H', len(packet))
+        packet = packet[0:2] + new_length + packet[4:]
+        ip_checksum = struct.pack('!H', self.ip_checksum(packet))
+        tcp_checksum = struct.pack('!H', self.tcp_checksum(packet))
+        packet = packet[0:10] + ip_checksum + packet[12:]
+        packet = packet[0:header_start + 16] + tcp_checksum + packet[header_start + 18:]
+        return packet
+
+    def dns_response_packet(self, pkt_eval, pkt):
+        if pkt_eval['qtype'] == 28:
+            return None
+        header_start = pkt_eval['header_len'] * 4 
+        packet = pkt
+        src_ip, dst_ip = socket.inet_aton(pkt_eval['dst_ip']), socket.inet_aton(pkt_eval['src_ip'])
+        packet = packet[0:12] + src_ip + dst_ip + packet[20:]
+
+        src_port, dst_port = struct.pack('!H', pkt_eval['dst_port']), struct.pack('!H', pkt_eval['src_port'])
+        packet = packet[0:header_start] + src_port + dst_port + packet[header_start + 4:]
+
+        dns_start = header_start + 8
+
+        header_second_row = struct.unpack('!H', pkt[dns_start+2:dns_start+4])[0]
+        qr = 0b1000000000000000
+        header_second_row = qr | header_second_row
+        packet = packet[0:dns_start + 2] + struct.pack('!H', header_second_row) + packet[dns_start + 4:]
+
+        ancount = 1
+        packet = packet[0:dns_start + 6] + struct.pack('!H', ancount) + packet[dns_start + 8:]
+
+        nscount = 0
+        arcount = 0
+        packet = packet[0:dns_start + 8] + struct.pack('!H', nscount) + packet[dns_start + 10:]
+        packet = packet[0:dns_start + 10] + struct.pack('!H', arcount) + packet[dns_start + 12:]
+
+        question_start = dns_start + 12
+        
+        question_packet = packet[question_start:]
+
+        qname_length = 0
+        name = 0
+        for b in question_packet:
+            byte = struct.unpack('!B', b)[0]
+            if byte == 0:
+                break
+            if name == 0:
+                name = byte
+                qname_length = qname_length + byte + 1
+            else:
+                name -= 1
+        qtype_start = question_start + qname_length + 1
+        qtype = qclass = struct.pack('!H', 1)
+        packet = packet[0:qtype_start] + qtype + qclass + packet[qtype_start + 4:]
+        packet = packet[0: qtype_start + 4]
+
+        packet += packet[question_start:]
+        
+        ttl = struct.pack('!L', 1)
+        rdl = struct.pack('!H', 4)
+        fixed_ip = socket.inet_aton('54.173.224.150')
+
+        packet += ttl + rdl + fixed_ip
+
+        udp_length = len(packet) - header_start
+        packet = packet[0:header_start + 4] + struct.pack('!H', udp_length) + packet[header_start + 6:]
+        new_length = struct.pack('!H', len(packet))
+        packet = packet[0:2] + new_length + packet[4:]
+
+
+        ip_checksum = struct.pack('!H', self.ip_checksum(packet))
+        packet = packet[0:10] + ip_checksum + packet[12:]
+        udp_checksum = struct.pack('!H', 0)
+        packet = packet[0:header_start + 6] + udp_checksum + packet[header_start + 8:]
+
+        return packet
+
+
+    def ip_checksum(self, packet):
+        dst_checksum = 0
+        version_length = struct.unpack('!B', packet[0:1])[0]
+        length = version_length & 0x0F
+        length *= 4
+        current = 0
+        while current < length:
+            if current != 10:
+                dst_checksum += struct.unpack('!H', packet[current: current+2])[0]
+            current += 2
+
+        dst_checksum = (dst_checksum >> 16) + (dst_checksum & 0xFFFF)
+        dst_checksum += (dst_checksum >> 16)
+        return ~dst_checksum & 0xFFFF
+
+
+    def tcp_checksum(self, packet):
+        dst_checksum = 0
+        version_length = struct.unpack('!B', packet[0:1])[0]
+        header_length = version_length & 0x0F
+        header_start = header_length * 4
+        total_length = struct.unpack('!H', packet[2:4])[0]
+
+        if total_length % 2 != 0:
+            packet = packet + struct.pack('!B', 0)
+            total_length += 1
+        dst_checksum += struct.unpack('!H', packet[12:14])[0]
+        dst_checksum += struct.unpack('!H', packet[14:16])[0]
+        dst_checksum += struct.unpack('!H', packet[16:18])[0]
+        dst_checksum += struct.unpack('!H', packet[18:20])[0]
+
+        dst_checksum += struct.unpack('!B', packet[9:10])[0]
+        dst_checksum = total_length - header_start + dst_checksum
+
+        current = header_start
+        while current < total_length:
+            if current != (header_start + 16):
+                dst_checksum += struct.unpack('!H', packet[current: current + 2])[0]
+            current += 2
+
+        dst_checksum = (dst_checksum >> 16) + (dst_checksum & 0xFFFF)
+        dst_checksum += (dst_checksum >> 16)
+        return ~dst_checksum & 0xFFFF
 
     # This evaluation is where we pretty much decipher the IP packet and return this evaluation
     # to the handle_rules part and see whether or not this packet is part of the rules
@@ -111,7 +288,7 @@ class Firewall:
             ip_eval['src_port'] = struct.unpack('!H', pkt[header_start:header_start + 2])[0]
             ip_eval['dst_port'] = struct.unpack('!H', pkt[header_start + 2:header_start + 4])[0]
             ip_eval['udp_len'] = struct.unpack('!H', pkt[header_start + 4:header_start + 6])[0]
-            ip_eval['checksum'] = struct.unpack('!H', pkt[header_start + 6:header_start + 8])[0]
+            ip_eval['udp_checksum'] = struct.unpack('!H', pkt[header_start + 6:header_start + 8])[0]
             if ip_eval['dst_port'] == 53:
                 self.make_dns_packet(ip_eval, pkt, header_start)
                 return 'dns'
@@ -121,7 +298,7 @@ class Firewall:
     def make_icmp_packet(self, ip_eval, pkt, header_start):
         ip_eval['type'] = struct.unpack('!B', pkt[header_start:header_start+1])[0]
         ip_eval['code'] = struct.unpack('!B', pkt[header_start+1: header_start + 2])[0]
-        ip_eval['checksum'] = struct.unpack('!H', pkt[header_start+2:header_start+4])[0]
+        ip_eval['icmp_checksum'] = struct.unpack('!H', pkt[header_start+2:header_start+4])[0]
 
         # TODO: (not sure if 3B) but theres an 'others' leftover, not sure what this means, will have to
         # look into it
@@ -138,7 +315,9 @@ class Firewall:
         reserved = 0b00001111 & offset_reserved
 
         flags = struct.unpack('!B', pkt[header_start + 13: header_start + 14])[0]
-        #TODO: (PROJECT 3B) deal with this flag nonsense
+        ip_eval['tcp_flags'] = flags
+        ip_eval['tcp_checksum'] = struct.unpack('!H', pkt[header_start + 16: header_start + 18])[0]
+
 
 
     def make_dns_packet(self, ip_eval, pkt, header_start):
@@ -166,7 +345,7 @@ class Firewall:
     # look at the verdict, use this, otherwise, just pass the packet.
     # we want to return some sort of indicator to send this packet or not
  
-    def evaluate_rules(self, pkt_dir, pkt_eval):
+    def evaluate_rules(self, pkt_dir, pkt_eval, packet):
         # TODO: need to handle all rules here and determine for packet PASS/FAIL return type?
         verdict, protocol, ext_ip, ext_port, domain = None, None, None, None, None
         match_found = False
@@ -207,7 +386,19 @@ class Firewall:
                 verdict = rule[0]
                 protocol = 'dns'
                 domain = rule[2]
-                if pkt_eval['protocol'] == protocol:
+                if (pkt_eval['src_port'] == 80 or pkt_eval['dst_port'] == 80):
+                    # Handle http stuff here
+                    verdict = self.http_log(pkt_eval, pkt_dir, packet)
+                    print verdict
+                    if verdict == None:
+                        pass  # NOT SURE IF I JUST PASS PACKET HERE RIGHT AWAY
+                    elif verdict == 'drop':
+                        final_verdict = 'drop'
+                        match_found = True
+                    elif verdict == 'pass':
+                        final_verdict = 'pass'
+                        match_found = True
+                if pkt_eval['protocol'] == 'dns':
                     dns_ok = self.check_dns(pkt_dir, pkt_eval)
                     if dns_ok:
                         # print domain
@@ -238,9 +429,119 @@ class Firewall:
         if not match_found:
             return True
         else:
+            protocol = pkt_eval['protocol']
             if final_verdict == 'pass' and pkt_eval['pass_pkt']:
                 return True
+            elif final_verdict == 'drop' and pkt_eval['pass_pkt']:
+                return 'drop'
+            elif final_verdict == 'deny' and protocol == 'tcp':
+                return 'deny'
+            elif final_verdict == 'deny' and protocol == 'dns':
+                return 'deny'
             return False
+
+    def http_log(self, pkt_eval, pkt_dir, packet):
+        '''if pkt_dir == PKT_DIR_OUTGOING and pkt_eval['src_port'] != 80:
+            return None
+        elif pkt_dir == PKT_DIR_INCOMING and pkt_eval['dst_port'] != 80:
+            return None'''
+
+        src_ip = pkt_eval['src_ip']
+        dst_ip = pkt_eval['dst_ip']
+        src_port = pkt_eval['src_port']
+        dst_port = pkt_eval['dst_port']
+
+        http_key = (src_ip, dst_ip, src_port, dst_port)
+
+        src_ip = pkt_eval['src_ip']
+        dst_ip = pkt_eval['dst_ip']
+            
+        src_ip, dst_ip = dst_ip, src_ip
+
+        src_port = pkt_eval['src_port']
+        dst_port = pkt_eval['dst_port']
+
+        src_port, dst_port = dst_port, src_port
+        reversed_key = (src_ip, dst_ip, src_port, dst_port)
+        '''print 'current seq_ack'
+        print http_key, self.stream_seq_ack[http_key]
+        print 'current byte'
+        print http_key, self.byte_stream[http_key]'''
+
+
+        if pkt_dir == PKT_DIR_OUTGOING:
+
+            # Check to see if we have a (seq, ack) for key, if not, check for a syn
+            if http_key not in self.stream_seq_ack:
+                syn_set = 0x02 & pkt_eval['tcp_flags']
+                if syn_set == 0x02:
+                    print 'syn'
+                    self.stream_seq_ack[http_key] = (pkt_eval['seq_num'], pkt_eval['ack_num'])
+                else:
+                    # This packet isnt for this request so we just pass it
+                    return None
+
+            if http_key not in self.byte_stream:
+                ack_set = 0x10 & pkt_eval['tcp_flags']
+                if ack_set == 0x10:
+                    print 'ack'
+                    self.byte_stream[http_key] = []
+                    self.stream_seq_ack[http_key] = (pkt_eval['seq_num'], pkt_eval['ack_num'])
+            else:
+                payload_location = pkt_eval['header_len'] * 4
+
+                if payload_location > len(packet):
+                    payload_size = len(packet) - payload_location
+                    
+                    reversed_key = (src_ip, dst_ip, src_port, dst_port)
+                    expected_ack = payload_size + pkt_eval['seq_num']
+                    self.stream_seq_ack[reversed_key] = (pkt_eval['seq_num'], expected_ack)
+
+                    self.byte_stream[http_key].append(packet)
+                    return 'pass'
+
+                else:
+                    ack_packet_seq_ack =  self.stream_seq_ack[http_key]
+                    current_ack = self.stream_seq_ack[reversed_key][1]
+                    self.stream_seq_ack[reversed_key] = (ack_packet_seq_ack[0], current_ack)
+                    if ack_packet_seq_ack[1] > pkt_eval['ack_num']:
+                        return 'drop'
+                    else:
+                        return 'pass'
+                    
+
+        elif pkt_dir == PKT_DIR_INCOMING:
+            if http_key not in self.stream_seq_ack:
+                syn_ack_set = 0x12 & pkt_eval['tcp_flags']
+                if syn_ack_set == 0x12:
+                    print 'syn ack'
+                    self.stream_seq_ack[http_key] = (pkt_eval['seq_num'], pkt_eval['ack_num'])
+                    self.byte_stream[http_key] = []
+                else:
+                    return None
+            else:
+                # First check whether or not its an ACK or a data
+                payload_location = pkt_eval['header_len'] * 4
+                if payload_location > len(packet):
+                    payload_size = len(packet) - payload_location
+                    
+                    reversed_key = (src_ip, dst_ip, src_port, dst_port)
+                    expected_ack = payload_size + pkt_eval['seq_num']
+                    self.stream_seq_ack[reversed_key] = (pkt_eval['seq_num'], expected_ack)
+
+                    self.byte_stream[http_key].append(packet)
+                    return 'pass'
+
+                else:
+                    ack_packet_seq_ack =  self.stream_seq_ack[http_key]
+                    current_ack = self.stream_seq_ack[reversed_key][1]
+                    self.stream_seq_ack[reversed_key] = (ack_packet_seq_ack[0], current_ack)
+                    if ack_packet_seq_ack[1] > pkt_eval['ack_num']:
+                        return 'drop'
+                    else:
+                        return 'pass'
+        return 'pass'
+
 
     # Check to see if DNS preconditions for valid packet are satisfied
     def check_dns(self, pkt_dir, pkt_eval):
