@@ -32,6 +32,7 @@ class Firewall:
 
         self.byte_stream = {}
         self.stream_seq_ack = {}
+        self.log_for_key = {}
 
 
     # TODO: Load the GeoIP DB ('geoipdb.txt') as well.
@@ -311,8 +312,10 @@ class Firewall:
         ip_eval['ack_num'] = struct.unpack('!L', pkt[header_start + 8: header_start + 12])[0]
         
         offset_reserved = struct.unpack('!B', pkt[header_start + 12: header_start + 13])[0]
-        offset = 0b11110000 & offset_reserved
-        reserved = 0b00001111 & offset_reserved
+        offset = 0xF0 & offset_reserved
+        offset = offset >> 4
+        ip_eval['tcp_offset'] = offset
+        reserved = 0x0F & offset_reserved
 
         flags = struct.unpack('!B', pkt[header_start + 13: header_start + 14])[0]
         ip_eval['tcp_flags'] = flags
@@ -388,8 +391,11 @@ class Firewall:
                 domain = rule[2]
                 if (pkt_eval['src_port'] == 80 or pkt_eval['dst_port'] == 80):
                     # Handle http stuff here
-                    verdict = self.http_log(pkt_eval, pkt_dir, packet)
-                    print verdict
+                    if final_verdict == 'drop' or final_verdict == 'deny':
+                        verdict = final_verdict
+                    else: 
+                        verdict = self.http_log(pkt_eval, pkt_dir, packet, domain)
+                    # print verdict
                     if verdict == None:
                         pass  # NOT SURE IF I JUST PASS PACKET HERE RIGHT AWAY
                     elif verdict == 'drop':
@@ -398,7 +404,7 @@ class Firewall:
                     elif verdict == 'pass':
                         final_verdict = 'pass'
                         match_found = True
-                if pkt_eval['protocol'] == 'dns':
+                elif pkt_eval['protocol'] == 'dns' and verdict != 'log':
                     dns_ok = self.check_dns(pkt_dir, pkt_eval)
                     if dns_ok:
                         # print domain
@@ -440,7 +446,7 @@ class Firewall:
                 return 'deny'
             return False
 
-    def http_log(self, pkt_eval, pkt_dir, packet):
+    def http_log(self, pkt_eval, pkt_dir, packet, domain):
         '''if pkt_dir == PKT_DIR_OUTGOING and pkt_eval['src_port'] != 80:
             return None
         elif pkt_dir == PKT_DIR_INCOMING and pkt_eval['dst_port'] != 80:
@@ -475,7 +481,7 @@ class Firewall:
             if http_key not in self.stream_seq_ack:
                 syn_set = 0x02 & pkt_eval['tcp_flags']
                 if syn_set == 0x02:
-                    print 'syn'
+                    # print 'syn'
                     self.stream_seq_ack[http_key] = (pkt_eval['seq_num'], pkt_eval['ack_num'])
                 else:
                     # This packet isnt for this request so we just pass it
@@ -484,18 +490,27 @@ class Firewall:
             if http_key not in self.byte_stream:
                 ack_set = 0x10 & pkt_eval['tcp_flags']
                 if ack_set == 0x10:
-                    print 'ack'
+                    # print 'ack'
                     self.byte_stream[http_key] = []
                     self.stream_seq_ack[http_key] = (pkt_eval['seq_num'], pkt_eval['ack_num'])
             else:
-                payload_location = pkt_eval['header_len'] * 4
+                ip_length = pkt_eval['header_len'] * 4
+                '''print 'header_len', pkt_eval['header_len']
+                print 'tcp_len', pkt_eval['tcp_offset']
+                print 'total_len', pkt_eval['total_len']'''
+                tcp_length = pkt_eval['tcp_offset'] * 4
+                payload_location = ip_length + tcp_length
+                ''' print 'payload_location' ,payload_location
+                print 'packet length', len(packet)'''
 
-                if payload_location > len(packet):
+                if payload_location < len(packet):
                     payload_size = len(packet) - payload_location
                     
                     reversed_key = (src_ip, dst_ip, src_port, dst_port)
                     expected_ack = payload_size + pkt_eval['seq_num']
                     self.stream_seq_ack[reversed_key] = (pkt_eval['seq_num'], expected_ack)
+                    # print packet[payload_location:]
+                    self.write_request_log(packet[payload_location:], http_key, domain)
 
                     self.byte_stream[http_key].append(packet)
                     return 'pass'
@@ -504,7 +519,7 @@ class Firewall:
                     ack_packet_seq_ack =  self.stream_seq_ack[http_key]
                     current_ack = self.stream_seq_ack[reversed_key][1]
                     self.stream_seq_ack[reversed_key] = (ack_packet_seq_ack[0], current_ack)
-                    if ack_packet_seq_ack[1] > pkt_eval['ack_num']:
+                    if ack_packet_seq_ack[1] > pkt_eval['ack_num'] or ack_packet_seq_ack[1] + 1500000000 < pkt_eval['ack_num']:
                         return 'drop'
                     else:
                         return 'pass'
@@ -514,20 +529,25 @@ class Firewall:
             if http_key not in self.stream_seq_ack:
                 syn_ack_set = 0x12 & pkt_eval['tcp_flags']
                 if syn_ack_set == 0x12:
-                    print 'syn ack'
+                    # print 'syn ack'
                     self.stream_seq_ack[http_key] = (pkt_eval['seq_num'], pkt_eval['ack_num'])
                     self.byte_stream[http_key] = []
                 else:
                     return None
             else:
                 # First check whether or not its an ACK or a data
-                payload_location = pkt_eval['header_len'] * 4
-                if payload_location > len(packet):
+                ip_length = pkt_eval['header_len'] * 4
+                tcp_length = pkt_eval['tcp_offset'] * 4
+                payload_location = ip_length + tcp_length
+
+                if payload_location < len(packet):
                     payload_size = len(packet) - payload_location
                     
                     reversed_key = (src_ip, dst_ip, src_port, dst_port)
                     expected_ack = payload_size + pkt_eval['seq_num']
                     self.stream_seq_ack[reversed_key] = (pkt_eval['seq_num'], expected_ack)
+                    # print packet[payload_location:]
+                    self.write_response_log(packet[payload_location:], reversed_key)
 
                     self.byte_stream[http_key].append(packet)
                     return 'pass'
@@ -541,6 +561,66 @@ class Firewall:
                     else:
                         return 'pass'
         return 'pass'
+
+    def write_request_log(self, data, http_key, domain):
+        f = open('http.log', 'a')
+        if not http_key in self.log_for_key:
+            if '\r\n\r\n' in data:
+                results = data.split('\n')
+                hostname = ''
+                log_result = ''
+                method = ''
+                path = ''
+                version = ''
+                for i in xrange(0,len(results)):
+                    line = results[i]
+                    line = line.split()
+                    if i == 0:
+                        method = line[0]
+                        path = line[1]
+                        version = line[2]
+                    if 'Host:' in line:
+                        hostname = ''
+                        if len(line) > 1:
+                            if domain[0] == '*':
+                                if len(domain) != 1:
+                                    mask_len = len(domain) - 1
+                                    hostname = line[1]
+                                    if hostname[-mask_len:] == domain[1:]:
+                                        hostname = line[1]
+                                    else:
+                                        hostname = ''
+                                        
+                                else:
+                                     hostname = line[1]
+                            else:
+                                if domain == line[1]:
+                                    hostname = line[1]
+                        else:
+                            hostname = domain
+                            
+                if hostname != '':
+                    log_result += hostname + ' ' + method + ' ' + path + ' ' + version + ' '
+                    self.log_for_key[http_key] = log_result
+            f.flush()
+            f.close()
+    def write_response_log(self, data, reverse_key):
+        if reverse_key in self.log_for_key:
+            f = open('http.log', 'a')
+            if '\r\n\r\n' in data:
+                results = data.split('\n')
+                size = '-1'
+                status_code = results[0].split()[1]
+                for line in results:
+                    line = line.split()
+                    if 'Content-Length:' in line:
+                        size = line[1]
+                current_log = self.log_for_key[reverse_key]
+                current_log += status_code + ' ' + size
+                f.write(current_log + '\n')
+                del self.log_for_key[reverse_key]
+            f.flush()
+            f.close()
 
 
     # Check to see if DNS preconditions for valid packet are satisfied
